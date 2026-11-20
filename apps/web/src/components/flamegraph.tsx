@@ -8,6 +8,7 @@ import {
   ExternalLink,
   FileJson,
   ShieldAlert,
+  Sparkles,
   Terminal,
   Wallet,
 } from "lucide-react";
@@ -105,8 +106,14 @@ function alertBadgeLabel(alertType: StoredAlert["alertType"]): string {
 export function EconomicFlamegraph({ detail, onAlertTriaged }: FlamegraphProps) {
   const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
   const [triagingId, setTriagingId] = useState<string | null>(null);
+  const [streamedDiagnosis, setStreamedDiagnosis] = useState<string>("");
+  const [streamModel, setStreamModel] = useState<string>("AI Gateway");
+  const [streaming, setStreaming] = useState(false);
+  const [streamError, setStreamError] = useState<string | null>(null);
 
   useEffect(() => {
+    setStreamedDiagnosis("");
+    setStreamError(null);
     if (!detail) {
       setSelectedSpanId(null);
       return;
@@ -177,6 +184,46 @@ export function EconomicFlamegraph({ detail, onAlertTriaged }: FlamegraphProps) 
     URL.revokeObjectURL(url);
   }
 
+  async function streamAiDiagnosis() {
+    setStreaming(true);
+    setStreamError(null);
+    setStreamedDiagnosis("");
+    try {
+      const res = await fetch("/api/v1/ai/stream", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ traceId: trace.id }),
+      });
+      const headerModel = res.headers.get("x-paaco-model");
+      if (headerModel) setStreamModel(headerModel);
+      if (!res.ok || !res.body) {
+        const raw = await res.text().catch(() => "");
+        let msg = raw;
+        try {
+          const parsed = JSON.parse(raw) as { error?: string };
+          if (parsed.error) msg = parsed.error;
+        } catch {
+          // keep raw text fallback
+        }
+        setStreamError(msg || `Streaming failed (HTTP ${res.status})`);
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value) {
+          setStreamedDiagnosis((prev) => prev + decoder.decode(value, { stream: true }));
+        }
+      }
+    } catch (err) {
+      setStreamError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setStreaming(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
       {/* Trace Summary Card */}
@@ -200,15 +247,43 @@ export function EconomicFlamegraph({ detail, onAlertTriaged }: FlamegraphProps) 
             <p className="text-sm font-medium text-zinc-100">{trace.userPrompt}</p>
           </div>
 
-          <button
-            type="button"
-            onClick={downloadDisputeBundle}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs font-medium text-zinc-200 transition hover:border-zinc-500 hover:text-white"
-          >
-            <FileJson className="h-3.5 w-3.5" />
-            Export Dispute JSON
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={streaming}
+              onClick={() => void streamAiDiagnosis()}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-2.5 py-1.5 text-xs font-medium text-emerald-300 transition hover:bg-emerald-500/25 disabled:opacity-60"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              {streaming ? "Streaming..." : "Stream AI Diagnosis"}
+            </button>
+
+            <button
+              type="button"
+              onClick={downloadDisputeBundle}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs font-medium text-zinc-200 transition hover:border-zinc-500 hover:text-white"
+            >
+              <FileJson className="h-3.5 w-3.5" />
+              Export Dispute JSON
+            </button>
+          </div>
         </div>
+
+        {(streamedDiagnosis || streamError || streaming) && (
+          <div className="mt-3 rounded-lg border border-emerald-500/30 bg-zinc-950/80 p-3 text-xs">
+            <div className="mb-1 flex items-center justify-between font-mono text-[10px] text-emerald-300">
+              <span>AI GATEWAY STREAM • {streamModel}</span>
+              {streaming && <span>streaming chunks...</span>}
+            </div>
+            {streamError ? (
+              <p className="text-rose-400">{streamError}</p>
+            ) : (
+              <p className="whitespace-pre-wrap leading-relaxed text-zinc-200">
+                {streamedDiagnosis || "Waiting for first token..."}
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Unit Economics Mini Strip */}
         <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
