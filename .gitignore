@@ -1,0 +1,10 @@
+node_modules
+.next
+dist
+.turbo
+.vercel
+.env
+.env.local
+apps/web/src/app/.well-known
+*.tsbuildinfo
+.DS_Store
